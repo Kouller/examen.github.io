@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -66,10 +65,12 @@
 
     <div id="results" class="card pad" style="display:none">
       <h2>Resultados</h2>
-      <p>Tu nota: <strong class="scorebox" id="score"></strong></p>
+      <p>Tu nota: <strong class="scorebox" id="score"></strong> <span id="passStatus" class="pill"></span></p>
       <p class="muted">Se evalúan respuestas exactas (en selección múltiple, debes marcar <em>todas</em> y solo las correctas).</p>
       <div class="row">
         <button class="btn-accent" id="btnDownload">Descargar grabación</button>
+        <button class="btn-accent" id="btnExport">Descargar reporte (CSV)</button>
+        <button class="btn-accent" id="btnExportPDF">Descargar reporte (PDF)</button>
         <button class="btn-ghost" id="btnRestart">Volver a inicio</button>
       </div>
     </div>
@@ -80,7 +81,7 @@
   </div>
   <div class="watermark">Modo examen</div>
 
-  <script defer src="./bank.js?v=1"></script>
-  <script defer src="./app.js?v=1"></script>
+  <script defer src="./bank.js?v=4"></script>
+  <script defer src="./app.js?v=4"></script>
 </body>
 </html>
