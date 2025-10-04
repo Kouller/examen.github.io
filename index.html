@@ -4,10 +4,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <title>Examen – 42 preguntas</title>
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
+  <noscript><div style="padding:12px;background:#ffc;color:#222">Necesitas habilitar JavaScript para usar el examen.</div></noscript>
   <div class="wrap">
     <div id="welcome" class="card pad">
       <h1>Examen Oficial (42 preguntas)</h1>
@@ -23,14 +25,15 @@
         </ul>
       </div>
       <div class="space"></div>
-      <div class="ok tiny">💡 Consejo: Cambia la duración en <code>DEFAULT_DURATION_MS</code> dentro de <code>app.js</code>. Para pruebas rápidas: añade <code>?mins=5</code> a la URL.</div>
+      <div class="ok tiny">💡 Cambia la duración editando <span class="kbd">DEFAULT_DURATION_MS</span> en <code>app.js</code>. Para pruebas rápidas: añade <code>?mins=5</code> a la URL.</div>
       <div class="space"></div>
       <div class="row">
         <button id="btnStart" class="btn-accent">Empezar examen</button>
         <button id="btnCam" class="btn-ghost" title="Activa una vista previa en la esquina (opcional)">Activar cámara</button>
         <button id="btnRecord" class="btn-ghost" title="Graba tu pestaña + cámara superpuesta (opcional)">Grabar pantalla (tab)</button>
-        <span class="muted tiny">Se guardará localmente; tendrás un botón para descargar al finalizar.</span>
+        <span class="muted tiny">La grabación se guarda localmente; podrás descargarla al finalizar.</span>
       </div>
+      <pre id="diag" class="diag tiny"></pre>
     </div>
 
     <div id="exam" class="card" style="display:none">
@@ -47,7 +50,7 @@
         </div>
         <div class="space"></div>
         <div id="qText" class="question"></div>
-        <div class="space"></"></div>
+        <div class="space"></div>
         <form id="options" class="col"></form>
       </div>
       <div class="toolbar">
@@ -77,7 +80,7 @@
   </div>
   <div class="watermark">Modo examen</div>
 
-  <script src="./bank.js"></script>
-  <script src="./app.js"></script>
+  <script defer src="./bank.js"></script>
+  <script defer src="./app.js"></script>
 </body>
 </html>
