@@ -270,49 +270,52 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ========== Generar PDF simple (sin justificación) ==========
-  function exportPDF(items, answers, scoreText, passText){
-    // Construye HTML imprimible
-    const rows = items.map((it, i)=>{
-      const correctLetters = (it.answer_letters||[]).slice().sort();
-      const givenLetters = (answers[i]||[]).slice().sort();
-      const correctText = (it.options||[])
-         .filter(o=>correctLetters.includes(o.label))
-         .map(o=>`${o.label.toUpperCase()}. ${escapeHtml(o.text||'')}`)
-         .join(' | ');
-      const givenText = (it.options||[])
-         .filter(o=>givenLetters.includes(o.label))
-         .map(o=>`${o.label.toUpperCase()}. ${escapeHtml(o.text||'')}`)
-         .join(' | ') || '—';
-      return `<tr>
-        <td style="vertical-align:top">${i+1}</td>
-        <td style="vertical-align:top">${escapeHtml(it.question||'')}</td>
-        <td style="vertical-align:top">${escapeHtml(givenText)}</td>
-        <td style="vertical-align:top">${escapeHtml(correctText)}</td>
-      </tr>`;
-    }).join('');
+  
+function exportPDF(items, answers, scoreText, passText){
+  const rows = items.map((it, i)=>{
+    const correctLetters = (it.answer_letters||[]).slice().sort();
+    const givenLetters = (answers[i]||[]).slice().sort();
+    const isCorrect = JSON.stringify(correctLetters) === JSON.stringify(givenLetters);
+    const correctText = (it.options||[])
+       .filter(o=>correctLetters.includes(o.label))
+       .map(o=>`${o.label.toUpperCase()}. ${escapeHtml(o.text||'')}`)
+       .join(' | ');
+    const givenText = (it.options||[])
+       .filter(o=>givenLetters.includes(o.label))
+       .map(o=>`${o.label.toUpperCase()}. ${escapeHtml(o.text||'')}`)
+       .join(' | ') || '—';
+    const estado = isCorrect ? 'Correcta' : 'Incorrecta';
+    return { num: i+1, q: it.question||'', givenText, correctText, estado };
+  });
 
-    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
-      <title>Reporte de examen</title>
-      <style>
-        body{font-family:system-ui,Segoe UI,Roboto,Arial;padding:24px}
-        h1{margin:0 0 8px} .muted{color:#555}
-        table{width:100%;border-collapse:collapse;margin-top:12px}
-        th,td{border:1px solid #ddd;padding:8px;text-align:left;font-size:12px}
-        th{background:#f3f4f6}
-        .pill{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid #ccc;font-size:12px}
-      </style></head><body>
-      <h1>Reporte de examen</h1>
-      <div class="muted">Nota: <strong>${escapeHtml(scoreText)}</strong></div>
-      <div class="pill" style="margin-top:6px">${escapeHtml(passText||'')}</div>
-      <table>
-        <thead><tr><th>#</th><th>Pregunta</th><th>Respuesta dada</th><th>Respuesta correcta</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <script>window.print();</script>
-    </body></html>`;
+  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+    <title>Reporte de examen</title>
+    <style>
+      body{font-family:system-ui,Segoe UI,Roboto,Arial;padding:24px}
+      h1{margin:0 0 8px} .muted{color:#555}
+      table{width:100%;border-collapse:collapse;margin-top:12px}
+      th,td{border:1px solid #ddd;padding:8px;text-align:left;font-size:12px;vertical-align:top}
+      th{background:#f3f4f6}
+      .pill{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid #ccc;font-size:12px}
+    </style></head><body>
+    <h1>Reporte de examen</h1>
+    <div class="muted">Nota: <strong>${escapeHtml(scoreText)}</strong></div>
+    <div class="pill" style="margin-top:6px">${escapeHtml(passText||'')}</div>
+    <table>
+      <thead><tr><th>#</th><th>Pregunta</th><th>Respuesta dada</th><th>Respuesta correcta</th><th>Estado</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr>
+        <td>${r.num}</td>
+        <td>${escapeHtml(r.q)}</td>
+        <td>${escapeHtml(r.givenText)}</td>
+        <td>${escapeHtml(r.correctText)}</td>
+        <td>${escapeHtml(r.estado)}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+    <script>window.print();</script>
+  </body></html>`;
 
-    const w = window.open('', '_blank');
-    if(!w){ alert('Permite ventanas emergentes para exportar a PDF.'); return; }
-    w.document.open(); w.document.write(html); w.document.close();
-  }
+  const w = window.open('', '_blank');
+  if(!w){ alert('Permite ventanas emergentes para exportar a PDF.'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+}
 });
