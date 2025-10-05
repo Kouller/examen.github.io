@@ -12,6 +12,7 @@ const pad = (n)=> String(n).padStart(2,'0');
 const shuffle = (arr)=>{ const a=[...arr]; for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]];} return a; };
 const pickN = (arr,n)=> shuffle(arr).slice(0,n);
 const flattenBank = (x)=>{ const out=[]; (function w(y){ Array.isArray(y) ? y.forEach(w) : out.push(y)})(x); return out; };
+const diag = (msg)=>{ const el=$('diag'); if(el){ el.textContent += msg + "\n"; } console.log('[diag]', msg); };
 
 // CSV helpers
 function csvEscape(v){ const s = String(v ?? ''); return `"${s.replace(/"/g,'""')}"`; }
@@ -40,11 +41,13 @@ function buildCsvReport(items, answers){
 /** ========= STATE ========= */
 let EXAM = {
   items: [], i: 0, answers: [], deadline: 0, timerId: null, reportBlob: null,
-  recording: { rec:null, chunks:[], stream:null }
+  recording: { rec:null, chunks:[], stream:null, stopped:false }
 };
 
 /** ========= APP ========= */
 document.addEventListener('DOMContentLoaded', () => {
+  diag('DOM listo');
+
   const welcome = $('welcome'), exam = $('exam'), results = $('results');
   const qTitle=$('qTitle'), qText=$('qText'), options=$('options'), qIndex=$('qIndex'), qTotal=$('qTotal'), modePill=$('modePill');
   const btnStart=$('btnStart'), btnNext=$('btnNext'), btnFinish=$('btnFinish'), btnRestart=$('btnRestart');
@@ -53,38 +56,70 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const BANK = (typeof TODAS !== 'undefined') ? TODAS : (typeof window!=='undefined' ? window.TODAS : undefined);
 
-  // Cámara
+  // Seguridad del contexto (requerido para cámara/grabación)
   const isSecure = location.protocol==='https:' || location.hostname==='localhost' || location.hostname==='127.0.0.1';
+  if(!isSecure){ diag('Aviso: No es contexto seguro. Cámara/Grabación pueden fallar. Usa HTTPS o localhost.'); }
   btnCam && (btnCam.disabled = !isSecure);
   btnRecord && (btnRecord.disabled = !isSecure);
 
+  // ========== Cámara ==========
   btnCam?.addEventListener('click', async ()=>{
     try{
       const stream = await navigator.mediaDevices.getUserMedia({video:true,audio:false});
-      cam.srcObject=stream; cam.style.display='block'; btnCam.disabled=true; btnCam.textContent='Cámara activa';
+      cam.srcObject=stream; cam.style.display='block';
+      btnCam.disabled=true; btnCam.textContent='Cámara activa';
+      diag('Cámara activada');
     }catch(e){ alert('No se pudo activar la cámara: '+e.message); }
   });
 
+  // ========== Grabación (pantalla + audio) ==========
   btnRecord?.addEventListener('click', async ()=>{
-    if(EXAM.recording.rec){
-      try{ EXAM.recording.rec.stop(); btnRecord.textContent='Procesando…'; btnRecord.disabled=true; }catch(e){}
+    // Si ya está grabando, paramos y esperamos flush
+    if(EXAM.recording.rec && EXAM.recording.rec.state!=='inactive'){
+      await stopRecording(); // espera a onstop para que se llenen los chunks
+      btnRecord.textContent='Grabación lista';
+      btnRecord.disabled=true;
       return;
     }
     try{
       const display = await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
       EXAM.recording.stream = display;
       EXAM.recording.chunks = [];
-      const rec = new MediaRecorder(display,{mimeType:'video/webm; codecs=vp9,opus'});
+      EXAM.recording.stopped = false;
+
+      // mimeType fallback por compatibilidad
+      let mime = 'video/webm; codecs=vp9,opus';
+      if(!MediaRecorder.isTypeSupported?.(mime)){
+        mime = 'video/webm;codecs=vp8,opus';
+      }
+      if(!MediaRecorder.isTypeSupported?.(mime)){
+        mime = 'video/webm';
+      }
+
+      const rec = new MediaRecorder(display,{mimeType:mime});
       rec.ondataavailable = e=>{ if(e.data && e.data.size>0) EXAM.recording.chunks.push(e.data); };
-      rec.onstop = ()=>{ btnRecord.textContent='Grabación lista'; btnRecord.disabled=true; };
+      rec.onstop = ()=>{ EXAM.recording.stopped = true; diag('Grabación detenida (onstop)'); };
       rec.start();
       EXAM.recording.rec = rec;
       btnRecord.textContent='Detener grabación';
+      diag('Grabación iniciada');
     }catch(e){ alert('No se pudo iniciar la grabación: '+e.message); }
   });
 
-  // Empezar
-  btnStart.addEventListener('click', ()=>{
+  async function stopRecording(){
+    const rec = EXAM?.recording?.rec;
+    if(!rec || rec.state==='inactive'){ return; }
+    diag('Deteniendo grabación...');
+    await new Promise(res=>{
+      const done = ()=>{ rec.removeEventListener('stop', done); res(); };
+      try{ rec.addEventListener('stop', done, {once:true}); rec.stop(); }
+      catch(_){ res(); }
+    });
+    try{ EXAM.recording.stream?.getTracks?.().forEach(t=>t.stop()); }catch(_){}
+  }
+
+  // ========== Empezar examen ==========
+  btnStart?.addEventListener('click', ()=>{
     const flat = flattenBank(BANK || []);
     if(!flat.length){ alert('No hay banco de preguntas cargado.'); return; }
 
@@ -105,7 +140,8 @@ document.addEventListener('DOMContentLoaded', () => {
     renderQuestion();
   });
 
-  btnNext.addEventListener('click', (e)=>{
+  // ========== Navegación de preguntas ==========
+  btnNext?.addEventListener('click', (e)=>{
     e.preventDefault();
     const selected = [...options.querySelectorAll('input:checked')].map(x=>x.value);
     if(selected.length===0){ alert('Selecciona al menos una opción.'); return; }
@@ -114,14 +150,30 @@ document.addEventListener('DOMContentLoaded', () => {
     else { EXAM.i++; renderQuestion(); }
   });
 
-  btnFinish.addEventListener('click', (e)=>{
+  btnFinish?.addEventListener('click', (e)=>{
     e.preventDefault();
     if(confirm('¿Deseas finalizar el examen? No podrás volver atrás.')) finalize('manual');
   });
 
   btnRestart?.addEventListener('click', ()=> location.reload());
 
-  btnExport?.addEventListener('click', ()=>{
+  // ========== Exportaciones ==========
+  $('btnDownload')?.addEventListener('click', async ()=>{
+    // Si aún no paró, párala y espera
+    if(EXAM?.recording?.rec && EXAM.recording.rec.state!=='inactive'){
+      await stopRecording();
+    }
+    const chunks = EXAM?.recording?.chunks || [];
+    if(!chunks.length){ alert('No hay grabación disponible. Si estabas grabando, espera 1–2 segundos y vuelve a intentar.'); return; }
+    const blob = new Blob(chunks, {type:'video/webm'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `examen-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.webm`;
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 10000);
+  });
+
+  $('btnExport')?.addEventListener('click', ()=>{
     if(!EXAM.reportBlob){ alert('Aún no hay reporte. Finaliza un examen para generar el CSV.'); return; }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(EXAM.reportBlob);
@@ -130,14 +182,14 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(()=>URL.revokeObjectURL(a.href), 10000);
   });
 
-  // Export PDF (print-to-PDF)
-  document.getElementById('btnExportPDF')?.addEventListener('click', ()=>{
+  $('btnExportPDF')?.addEventListener('click', ()=>{
     if(!EXAM.items?.length){ alert('Aún no hay reporte. Finaliza un examen para generar el PDF.'); return; }
-    const scoreText = document.getElementById('score')?.textContent || '';
-    const passText = document.getElementById('passStatus')?.textContent || '';
+    const scoreText = $('score')?.textContent || '';
+    const passText = $('passStatus')?.textContent || '';
     exportPDF(EXAM.items, EXAM.answers, scoreText, passText);
   });
 
+  // ========== Render pregunta ==========
   function renderQuestion(){
     const item = EXAM.items[EXAM.i];
     qIndex.textContent = String(EXAM.i+1);
@@ -155,6 +207,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnNext.textContent = (EXAM.i===EXAM.items.length-1) ? 'Finalizar →' : 'Continuar →';
   }
 
+  // ========== Temporizador ==========
   function startTimer(){
     const totalMs = Math.max(EXAM.deadline - Date.now(), 0);
     tick();
@@ -169,23 +222,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function finalize(reason){
+  // ========== Finalizar y puntaje ==========
+  async function finalize(reason){
     clearInterval(EXAM.timerId);
 
-    // detener grabación si activa
-    if(EXAM.recording && EXAM.recording.rec && EXAM.recording.rec.state!=='inactive'){
-      try{ EXAM.recording.rec.stop(); }catch(e){}
-    }
-
-    // apagar y ocultar cámara
+    // 1) Parar grabación (si estaba activa) y cámara
+    await stopRecording();
     try{
       if(cam && cam.srcObject){ cam.srcObject.getTracks().forEach(t=>t.stop()); cam.srcObject=null; }
       cam.style.display='none';
-      if(EXAM.recording && EXAM.recording.stream){
-        try{ EXAM.recording.stream.getTracks().forEach(t=>t.stop()); }catch(_){}
-      }
     }catch(_){}
 
+    // 2) Calcular nota
     const total = EXAM.items.length;
     let correct = 0;
     for(let i=0;i<total;i++){
@@ -196,6 +244,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const nota = (correct/total)*20;
     scoreEl.textContent = `${nota.toFixed(2)} / 20 (aciertos: ${correct}/${total})`;
 
+    // 70% para aprobar
     const required = Math.ceil(0.7 * total);
     const pass = correct >= required;
     if(passStatus){
@@ -206,102 +255,64 @@ document.addEventListener('DOMContentLoaded', () => {
       passStatus.style.borderColor = pass ? 'rgba(34,197,94,.45)' : 'rgba(239,68,68,.45)';
     }
 
-    // Construir CSV
+    // 3) Construir CSV para exportación
     try{
-      const csv = buildSimpleCsv(EXAM.items, EXAM.answers);
+      const csv = buildCsvReport(EXAM.items, EXAM.answers);
       EXAM.reportBlob = new Blob([csv], { type:'text/csv;charset=utf-8' });
     }catch(e){
       console.error('CSV build error', e);
       EXAM.reportBlob = null;
     }
 
+    // 4) Mostrar resultados
     exam.style.display='none';
     results.style.display='block';
   }
+
+  // ========== Generar PDF simple (sin justificación) ==========
+  function exportPDF(items, answers, scoreText, passText){
+    // Construye HTML imprimible
+    const rows = items.map((it, i)=>{
+      const correctLetters = (it.answer_letters||[]).slice().sort();
+      const givenLetters = (answers[i]||[]).slice().sort();
+      const correctText = (it.options||[])
+         .filter(o=>correctLetters.includes(o.label))
+         .map(o=>`${o.label.toUpperCase()}. ${escapeHtml(o.text||'')}`)
+         .join(' | ');
+      const givenText = (it.options||[])
+         .filter(o=>givenLetters.includes(o.label))
+         .map(o=>`${o.label.toUpperCase()}. ${escapeHtml(o.text||'')}`)
+         .join(' | ') || '—';
+      return `<tr>
+        <td style="vertical-align:top">${i+1}</td>
+        <td style="vertical-align:top">${escapeHtml(it.question||'')}</td>
+        <td style="vertical-align:top">${escapeHtml(givenText)}</td>
+        <td style="vertical-align:top">${escapeHtml(correctText)}</td>
+      </tr>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+      <title>Reporte de examen</title>
+      <style>
+        body{font-family:system-ui,Segoe UI,Roboto,Arial;padding:24px}
+        h1{margin:0 0 8px} .muted{color:#555}
+        table{width:100%;border-collapse:collapse;margin-top:12px}
+        th,td{border:1px solid #ddd;padding:8px;text-align:left;font-size:12px}
+        th{background:#f3f4f6}
+        .pill{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid #ccc;font-size:12px}
+      </style></head><body>
+      <h1>Reporte de examen</h1>
+      <div class="muted">Nota: <strong>${escapeHtml(scoreText)}</strong></div>
+      <div class="pill" style="margin-top:6px">${escapeHtml(passText||'')}</div>
+      <table>
+        <thead><tr><th>#</th><th>Pregunta</th><th>Respuesta dada</th><th>Respuesta correcta</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <script>window.print();</script>
+    </body></html>`;
+
+    const w = window.open('', '_blank');
+    if(!w){ alert('Permite ventanas emergentes para exportar a PDF.'); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+  }
 });
-
-
-function mapLettersToTexts(item, letters){
-  const dict = new Map((item.options||[]).map(o=>[String(o.label).toLowerCase(), o.text||'']));
-  return (letters||[]).map(l => dict.get(String(l).toLowerCase()) || '').filter(Boolean);
-}
-
-function buildFriendlyRows(items, answers){
-  const rows = [];
-  for(let i=0;i<items.length;i++){
-    const it = items[i] || {};
-    const correctLetters = (it.answer_letters || []).slice().sort();
-    const userLetters = (answers[i] || []).slice().sort();
-    const correctTexts = mapLettersToTexts(it, correctLetters);
-    const userTexts = mapLettersToTexts(it, userLetters);
-    const status = JSON.stringify(correctLetters) === JSON.stringify(userLetters) ? 'Correcta' : 'Incorrecta';
-    rows.push({
-      num: it.numero || (i+1),
-      pregunta: it.question || '',
-      usuario: userTexts.join(' | '),
-      correcta: correctTexts.join(' | '),
-      estado: status
-    });
-  }
-  return rows;
-}
-
-// Simplified CSV (persona normal): N°, Pregunta, Respuesta del usuario, Respuesta correcta, Estado
-function buildSimpleCsv(items, answers){
-  const rows = buildFriendlyRows(items, answers);
-  const header = ['N°','Pregunta','Respuesta del usuario','Respuesta correcta','Estado'];
-  const lines = [header.map(csvEscape).join(',')];
-  for(const r of rows){
-    lines.push([r.num, r.pregunta, r.usuario, r.correcta, r.estado].map(csvEscape).join(','));
-  }
-  return lines.join('\r\n');
-}
-
-
-    function exportPDF(items, answers, scoreText, passText){
-      const rows = buildFriendlyRows(items, answers);
-      const html = `<!doctype html>
-<html lang="es">
-<head>
-<meta charset="utf-8">
-<title>Reporte de examen</title>
-<style>
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial; margin:24px; color:#111}
-  h1{margin:0 0 4px 0; font-size:20px}
-  .muted{color:#555; margin:0 0 12px 0}
-  .badge{display:inline-block; padding:4px 8px; border-radius:8px; font-size:12px; border:1px solid #ddd}
-  table{width:100%; border-collapse:collapse; margin-top:12px; font-size:12px}
-  th,td{border:1px solid #ddd; padding:8px; vertical-align:top}
-  th{background:#f5f5f5; text-align:left}
-  .right{float:right}
-</style>
-</head>
-<body>
-  <h1>Reporte de examen</h1>
-  <div class="muted">${new Date().toLocaleString()}</div>
-  <div class="badge">${scoreText}</div>
-  <div class="badge" style="margin-left:8px">${passText}</div>
-  <table>
-    <thead>
-      <tr><th style="width:40px">N°</th><th>Pregunta</th><th style="width:28%">Respuesta del usuario</th><th style="width:28%">Respuesta correcta</th><th style="width:100px">Estado</th></tr>
-    </thead>
-    <tbody>
-      ${rows.map(r=>`<tr>
-        <td>${r.num}</td>
-        <td>${r.pregunta.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td>
-        <td>${(r.usuario||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td>
-        <td>${(r.correcta||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td>
-        <td>${r.estado}</td>
-      </tr>`).join('')}
-    </tbody>
-  </table>
-  <script>window.onload=()=>{setTimeout(()=>window.print(),300)}</script>
-</body>
-</html>`;
-
-      const w = window.open('', '_blank');
-      if(!w){ alert('Permite ventanas emergentes para descargar el PDF.'); return; }
-      w.document.open();
-      w.document.write(html);
-      w.document.close();
-    }
